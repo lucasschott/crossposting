@@ -45,15 +45,25 @@ def post_to_mastodon(content, images=None):
         api_base_url=MASTODON_BASE_URL
     )
 
-    media_ids = []
-    if images:
-        for img_path in images:
-            # Upload each image and collect its media ID
-            media_resp = mastodon.media_post(img_path)
-            media_ids.append(media_resp['id'])
+    # Attempt the post
+    try:
+        media_ids = []
+        if images:
+            for img_path in images:
+                # Upload each image and collect its media ID
+                media_resp = mastodon.media_post(img_path)
+                media_ids.append(media_resp['id'])
 
-    # Post with or without media
-    mastodon.status_post(content, media_ids=media_ids if media_ids else None)
+        # Post with or without media
+        mastodon.status_post(content, media_ids=media_ids if media_ids else None)
+        print(" > Mastodon post done")
+        return True
+
+    except Exception as e:
+        # Catch-all for other errors
+        print(f" > An error occurred while posting to Mastodon: {e}")
+        print(" > Skipping Mastodon post...")
+        return False
 
 
 
@@ -82,14 +92,27 @@ def post_to_twitter(content, images=None):
         access_token_secret=TWITTER_ACCESS_TOKEN_SECRET
     )
 
+    # Collect media IDs if images were provided
     media_ids = []
     if images:
         for img_path in images:
             media = api.media_upload(img_path)
             media_ids.append(media.media_id)
-        response = client.create_tweet(text=content, media_ids=media_ids, user_auth=True)
-    else:
-        response = client.create_tweet(text=content)
+
+    # Attempt the tweet
+    try:
+        if media_ids:
+            client.create_tweet(text=content, media_ids=media_ids, user_auth=True)
+        else:
+            client.create_tweet(text=content)
+        print(" > Twitter post done")
+        return True
+
+    except Exception as e:
+        # Catch-all for other errors
+        print(f" > An error occurred while posting to Twitter: {e}")
+        print(" > Twitter post skipped")
+        return False
 
 
 
@@ -109,26 +132,37 @@ def post_to_bluesky(content, images=None):
     bluesky_password = getpass.getpass(prompt=f"Bluesky {BLUESKY_HANDLE} password: ")
     client.login(BLUESKY_HANDLE, bluesky_password)
 
-    if images:
-        # Build the embed with each image
-        images_list = []
-        for img_path in images:
-            with open(img_path, "rb") as img_file:
-                img_data = img_file.read()
-            blob = client.upload_blob(img_data)
-            images_list.append({
-                "image": blob.blob,
-                "alt": ""  # Optional alt text
-            })
+    # Attempt the post
+    try:
+        if images:
+            # Build the embed with each image
+            images_list = []
+            for img_path in images:
+                with open(img_path, "rb") as img_file:
+                    img_data = img_file.read()
+                blob = client.upload_blob(img_data)
+                images_list.append({
+                    "image": blob.blob,
+                    "alt": ""  # Optional alt text
+                })
 
-        embed = {
-            "$type": "app.bsky.embed.images",
-            "images": images_list
-        }
-        client.post(content, embed=embed)
-    else:
-        # Post text-only
-        client.post(content)
+            embed = {
+                "$type": "app.bsky.embed.images",
+                "images": images_list
+            }
+            client.post(content, embed=embed)
+        else:
+            # Post text-only
+            client.post(content)
+        print(" > BlueSky post done")
+        return True
+
+    except Exception as e:
+        # Catch-all for other errors
+        print(f" > An error occurred while posting to BlueSky: {e}")
+        print(" > Skipping BlueSky post...")
+        return False
+
 
 
 
@@ -167,16 +201,21 @@ def main():
         return
 
     # Post to all platforms
-    print("Posting to Mastodon...")
-    post_to_mastodon(content, args.images)
+    print(" > Posting to Mastodon...")
+    mastodon_posted = post_to_mastodon(content, args.images)
 
-    print("Posting to Twitter...")
-    post_to_twitter(content, args.images)
+    print(" > Posting to Twitter...")
+    twitter_posted = post_to_twitter(content, args.images)
 
-    print("Posting to Bluesky...")
-    post_to_bluesky(content, args.images)
+    print(" > Posting to Bluesky...")
+    bluesky_posted = post_to_bluesky(content, args.images)
 
-    print("Post successfully published to all platforms!")
+
+
+    if mastodon_posted and twitter_posted and bluesky_posted:
+        print("Post successfully posted to all platforms!")
+    else:
+        print("One or more platforms could not be posted to. Please check the logs above.")
 
 
 if __name__ == "__main__":

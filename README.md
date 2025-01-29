@@ -45,7 +45,7 @@ BLUESKY_HANDLE=username.bsky.social
 
 > **Note**:  
 > - Obtain Mastodon tokens by creating a new application in your Mastodon server’s settings.  
-> - Obtain Twitter API credentials from [developer.twitter.com](https://developer.twitter.com/).  
+> - Obtain Twitter API credentials from [developer.x.com](https://developer.twitter.com/).  
 > - For Bluesky, you’ll need a handle (e.g., `username.bsky.social`) and password.
 
 ---
