@@ -1,4 +1,4 @@
-# Media Cross Posting Script
+# Social Media Cross Posting Script
 
 A Python script that allows you to post a text message (from a `.txt` file) and one or more images to Mastodon, Twitter, and Bluesky with a single command.
 
