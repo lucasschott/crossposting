@@ -106,7 +106,7 @@ def post_to_twitter(content, images=None):
 
 
 def resolve_did(client, handle):
-    """ Resolve a Bluesky handle (e.g., lucas-schott.bsky.social) to its DID """
+    """ Resolve a Bluesky handle (e.g., @username.bsky.social) to its DID """
     clean_handle = handle.lstrip('@').strip().lower()  # Remove '@' and ensure lowercase
 
     try:
