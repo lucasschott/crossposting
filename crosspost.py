@@ -157,6 +157,45 @@ def create_text_builder(client, text):
 
     return text_builder
 
+def create_text_builder(client, text):
+    """ Build rich text with clickable mentions, hashtags, and web links using TextBuilder """
+    text_builder = TextBuilder()
+    
+    # Regex to match mentions, hashtags, and URLs
+    pattern = r'(@[a-zA-Z0-9_.-]+\.bsky\.social|#[a-zA-Z0-9_]+|https?://[^\s]+)'
+    
+    # Track last processed position in text
+    last_pos = 0  
+
+    for match in re.finditer(pattern, text):
+        start, end = match.span()
+        matched_text = match.group(0)
+
+        # Add any text before the match
+        text_builder.text(text[last_pos:start])
+
+        if matched_text.startswith("@"):  # Handle mentions
+            handle = matched_text
+            did = resolve_did(client, handle)
+            if did:
+                text_builder.mention(handle, did)  # Add clickable mention
+            else:
+                text_builder.text(handle)  # Add as plain text if DID lookup fails
+
+        elif matched_text.startswith("#"):  # Handle hashtags
+            tag_text = matched_text
+            text_builder.tag(tag_text, tag_text.lstrip("#"))  # Add clickable hashtag
+
+        elif matched_text.startswith("http"):  # Handle web links
+            text_builder.link(matched_text, matched_text)  # Make URL clickable
+
+        last_pos = end  # Update last processed position
+
+    # Add any remaining text after the last mention/hashtag/link
+    text_builder.text(text[last_pos:])
+
+    return text_builder
+
 
 def post_to_bluesky(content, images=None):
     """
