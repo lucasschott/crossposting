@@ -91,10 +91,10 @@ Your post content should be stored in a `.json` file in the following format:
 
 ```json
 {
-    "post": "This is my post content!",
-    "mastodon_mentions": "@mastodon_mention",
-    "twitter_mentions": "@Twitter_mention",
-    "bluesky_mentions": "@mention.bsky.social"
+    "post": "This is my post content! #my_hashtag_1 #my_hashtag_2",
+    "mastodon_mentions": "@mastodon_mention_1 @mastodon_mention_2",
+    "twitter_mentions": "@twitter_mention_1 @twitter_mention_2",
+    "bluesky_mentions": "@mention_1.bsky.social @mention_2.bsky.social"
 }
 ```
 
