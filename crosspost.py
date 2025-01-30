@@ -10,7 +10,7 @@ from mastodon import Mastodon
 import tweepy
 from atproto import Client as BlueskyClient
 from atproto_client.exceptions import UnauthorizedError
-from atproto_client.models import AppBskyRichtextFacet
+from atproto_client.utils.text_builder import TextBuilder
 
 
 load_dotenv()
@@ -105,44 +105,57 @@ def post_to_twitter(content, images=None):
 
 
 
-
 def resolve_did(client, handle):
-    """ Resolve a Bluesky handle (@username.bsky.social) to its DID """
+    """ Resolve a Bluesky handle (e.g., lucas-schott.bsky.social) to its DID """
+    clean_handle = handle.lstrip('@').strip().lower()  # Remove '@' and ensure lowercase
+
     try:
-        response = client.com.atproto.identity.resolve_handle({"handle": handle})
-        return response.get("did")  # Extract the DID safely
+        response = client.com.atproto.identity.resolve_handle({"handle": clean_handle})
+        did = getattr(response, "did", None)  # Safely get the 'did' attribute
+
+        if did:
+            return did
+        else:
+            print(f" > DID lookup returned empty for {handle}")
+            return None  # Skip mention if DID not found
+
     except Exception as e:  # Catch all errors
-        print(f"⚠️ Could not resolve DID for {handle}: {e}")
+        print(f" > Could not resolve DID for {handle}: {e}")
         return None  # Skip the mention if resolution fails
 
 
-def create_facets(client, text):
-    """ Identify mentions and hashtags and format them as rich text facets """
-    facets = []
+def create_text_builder(client, text):
+    """ Build rich text with mentions and hashtags using TextBuilder """
+    text_builder = TextBuilder()
     
-    # Process mentions (@username.bsky.social)
-    for match in re.finditer(r'@([a-zA-Z0-9_.-]+\\.bsky\\.social)', text):
+    # Track last processed position in text
+    last_pos = 0  
+
+    # Process mentions (@username.bsky.social) and hashtags (#hashtag)
+    for match in re.finditer(r'(@[a-zA-Z0-9_.-]+\.bsky\.social|#[a-zA-Z0-9_]+)', text):
         start, end = match.span()
-        handle = match.group(1)  # Extract the @username
+        matched_text = match.group(0)
 
-        did = resolve_did(client, handle)
-        if did:
-            facet = {
-                "index": {"byteStart": start, "byteEnd": end},
-                "features": [{"$type": "app.bsky.richtext.facet#mention", "did": did}]
-            }
-            facets.append(facet)
+        # Add any text before the match
+        text_builder.text(text[last_pos:start])
 
-    # Process hashtags (#hashtag)
-    for match in re.finditer(r'#([a-zA-Z0-9_]+)', text):
-        start, end = match.span()
-        facet = {
-            "index": {"byteStart": start, "byteEnd": end},
-            "features": [{"$type": "app.bsky.richtext.facet#tag"}]
-        }
-        facets.append(facet)
+        if matched_text.startswith("@"):  # Handle mentions
+            handle = matched_text
+            did = resolve_did(client, handle)
+            if did:
+                text_builder.mention(handle, did)  # Add clickable mention
+            else:
+                text_builder.text(handle)  # Add as plain text if DID lookup fails
+        elif matched_text.startswith("#"):  # Handle hashtags
+            tag_text = matched_text
+            text_builder.tag(tag_text, tag_text.lstrip("#"))  # Add clickable hashtag
 
-    return facets if facets else None
+        last_pos = end  # Update last processed position
+
+    # Add any remaining text after the last mention/hashtag
+    text_builder.text(text[last_pos:])
+
+    return text_builder
 
 
 def post_to_bluesky(content, images=None):
@@ -189,7 +202,8 @@ def post_to_bluesky(content, images=None):
                 "images": images_list
             }
 
-        client.post(content, facets=create_facets(client, content) or None, embed=embed if images else None)
+        text_builder = create_text_builder(client, content)
+        client.post(text_builder, embed=embed if images else None)
 
         print(" > BlueSky post done")
         return True
