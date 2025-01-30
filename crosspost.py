@@ -1,12 +1,16 @@
 import argparse
 import os
+import json
 import getpass
+import re
 
 from dotenv import load_dotenv
 
 from mastodon import Mastodon
 import tweepy
 from atproto import Client as BlueskyClient
+from atproto_client.exceptions import UnauthorizedError
+from atproto_client.models import AppBskyRichtextFacet
 
 
 load_dotenv()
@@ -34,33 +38,23 @@ BLUESKY_HANDLE = os.getenv("BLUESKY_HANDLE")
 
 
 def post_to_mastodon(content, images=None):
-    """
-    Post to Mastodon with multiple images.
-    Args:
-        content (str): The text content of the post.
-        images (list[str]): A list of image file paths.
-    """
     mastodon = Mastodon(
         access_token=MASTODON_ACCESS_TOKEN,
         api_base_url=MASTODON_BASE_URL
     )
 
-    # Attempt the post
     try:
         media_ids = []
         if images:
             for img_path in images:
-                # Upload each image and collect its media ID
                 media_resp = mastodon.media_post(img_path)
                 media_ids.append(media_resp['id'])
 
-        # Post with or without media
         mastodon.status_post(content, media_ids=media_ids if media_ids else None)
         print(" > Mastodon post done")
         return True
 
     except Exception as e:
-        # Catch-all for other errors
         print(f" > An error occurred while posting to Mastodon: {e}")
         print(" > Skipping Mastodon post...")
         return False
@@ -70,19 +64,13 @@ def post_to_mastodon(content, images=None):
 
 
 def post_to_twitter(content, images=None):
-    """
-    Post to Twitter with multiple images.
-    Args:
-        content (str): The text content of the post.
-        images (list[str]): A list of image file paths.
-    """
     auth = tweepy.OAuth1UserHandler(
         consumer_key=TWITTER_API_KEY,
         consumer_secret=TWITTER_API_SECRET,
         access_token=TWITTER_ACCESS_TOKEN,
         access_token_secret=TWITTER_ACCESS_TOKEN_SECRET
     )
-    api = tweepy.API(auth)  # For media uploads
+    api = tweepy.API(auth)
 
     client = tweepy.Client(
         bearer_token=TWITTER_BEARER_TOKEN,
@@ -92,14 +80,12 @@ def post_to_twitter(content, images=None):
         access_token_secret=TWITTER_ACCESS_TOKEN_SECRET
     )
 
-    # Collect media IDs if images were provided
     media_ids = []
     if images:
         for img_path in images:
             media = api.media_upload(img_path)
             media_ids.append(media.media_id)
 
-    # Attempt the tweet
     try:
         if media_ids:
             client.create_tweet(text=content, media_ids=media_ids, user_auth=True)
@@ -109,7 +95,6 @@ def post_to_twitter(content, images=None):
         return True
 
     except Exception as e:
-        # Catch-all for other errors
         print(f" > An error occurred while posting to Twitter: {e}")
         print(" > Twitter post skipped")
         return False
@@ -118,24 +103,77 @@ def post_to_twitter(content, images=None):
 
 
 
+
+
+
+def resolve_did(client, handle):
+    """ Resolve a Bluesky handle (@username.bsky.social) to its DID """
+    try:
+        response = client.com.atproto.identity.resolve_handle({"handle": handle})
+        return response.get("did")  # Extract the DID safely
+    except Exception as e:  # Catch all errors
+        print(f"⚠️ Could not resolve DID for {handle}: {e}")
+        return None  # Skip the mention if resolution fails
+
+
+def create_facets(client, text):
+    """ Identify mentions and hashtags and format them as rich text facets """
+    facets = []
+    
+    # Process mentions (@username.bsky.social)
+    for match in re.finditer(r'@([a-zA-Z0-9_.-]+\\.bsky\\.social)', text):
+        start, end = match.span()
+        handle = match.group(1)  # Extract the @username
+
+        did = resolve_did(client, handle)
+        if did:
+            facet = {
+                "index": {"byteStart": start, "byteEnd": end},
+                "features": [{"$type": "app.bsky.richtext.facet#mention", "did": did}]
+            }
+            facets.append(facet)
+
+    # Process hashtags (#hashtag)
+    for match in re.finditer(r'#([a-zA-Z0-9_]+)', text):
+        start, end = match.span()
+        facet = {
+            "index": {"byteStart": start, "byteEnd": end},
+            "features": [{"$type": "app.bsky.richtext.facet#tag"}]
+        }
+        facets.append(facet)
+
+    return facets if facets else None
+
+
 def post_to_bluesky(content, images=None):
     """
     Post to Bluesky with multiple images.
-    Args:
-        content (str): The text content of the post.
-        images (list[str]): A list of image file paths.
     """
-    # Initialize the client
     client = BlueskyClient()
     
-    # Prompt for the password
-    bluesky_password = getpass.getpass(prompt=f"Bluesky {BLUESKY_HANDLE} password: ")
-    client.login(BLUESKY_HANDLE, bluesky_password)
+    max_attempts = 3
+    attempt = 0
+    success = False
 
-    # Attempt the post
+    while attempt < max_attempts and not success:
+        bluesky_password = getpass.getpass(prompt=f"Bluesky {BLUESKY_HANDLE} password: ")
+
+        try:
+            client.login(BLUESKY_HANDLE, bluesky_password)
+            success = True  # Login successful
+
+        except UnauthorizedError:
+            print(" > Invalid credentials. Please try again.")
+            attempt += 1
+
+    if not success:
+        print(" > Too many failed attempts. Skipping Bluesky post...")
+        return False  # Exit function if login fails after retries
+
+    # Proceed with posting
     try:
+
         if images:
-            # Build the embed with each image
             images_list = []
             for img_path in images:
                 with open(img_path, "rb") as img_file:
@@ -143,22 +181,20 @@ def post_to_bluesky(content, images=None):
                 blob = client.upload_blob(img_data)
                 images_list.append({
                     "image": blob.blob,
-                    "alt": ""  # Optional alt text
+                    "alt": ""
                 })
 
             embed = {
                 "$type": "app.bsky.embed.images",
                 "images": images_list
             }
-            client.post(content, embed=embed)
-        else:
-            # Post text-only
-            client.post(content)
+
+        client.post(content, facets=create_facets(client, content) or None, embed=embed if images else None)
+
         print(" > BlueSky post done")
         return True
 
     except Exception as e:
-        # Catch-all for other errors
         print(f" > An error occurred while posting to BlueSky: {e}")
         print(" > Skipping BlueSky post...")
         return False
@@ -168,54 +204,44 @@ def post_to_bluesky(content, images=None):
 
 
 
+
+
 def main():
     parser = argparse.ArgumentParser(description="Post content and optional images to multiple platforms.")
 
-    parser.add_argument(
-        "text_file",
-        type=str,
-        help="Path to the .txt file containing the post content."
-    )
-    parser.add_argument(
-        "--images",
-        type=str,
-        nargs="*",
-        help="Paths to the image files. You can provide multiple image paths.",
-        default=[]
-    )
+    parser.add_argument("json_file", type=str, help="Path to the .json file containing the post content and mentions.")
+    parser.add_argument("--images", type=str, nargs="*", help="Paths to the image files.", default=[])
+    parser.add_argument("--all", action="store_true", help="Post to all platforms.")
+    parser.add_argument("--twitter", action="store_true", help="Post to Twitter.")
+    parser.add_argument("--mastodon", action="store_true", help="Post to Mastodon.")
+    parser.add_argument("--bluesky", action="store_true", help="Post to Bluesky.")
 
     args = parser.parse_args()
 
-    # Read content from .txt file
-    if not os.path.exists(args.text_file):
-        print("The specified text file does not exist.")
+    if not (args.all or args.twitter or args.mastodon or args.bluesky):
+        print("No platforms specified. Skipping post.")
         return
 
-    with open(args.text_file, "r") as file:
-        content = file.read().strip()
+    with open(args.json_file, "r") as file:
+        data = json.load(file)
 
-    # Validate image paths
-    invalid_images = [image for image in args.images if not os.path.exists(image)]
-    if invalid_images:
-        print(f"The following image files do not exist: {', '.join(invalid_images)}")
-        return
+    base_post = data.get("post", "").strip()
+    mastodon_post = f"{base_post}\n{data.get('mastodon_mentions', '').strip()}".strip()
+    twitter_post = f"{base_post}\n{data.get('twitter_mentions', '').strip()}".strip()
+    bluesky_post = f"{base_post}\n{data.get('bluesky_mentions', '').strip()}".strip()
 
-    # Post to all platforms
-    print(" > Posting to Mastodon...")
-    mastodon_posted = post_to_mastodon(content, args.images)
+    if args.all or args.mastodon:
+        print(" > Posting to Mastodon...")
+        post_to_mastodon(mastodon_post, args.images)
 
-    print(" > Posting to Twitter...")
-    twitter_posted = post_to_twitter(content, args.images)
+    if args.all or args.twitter:
+        print(" > Posting to Twitter...")
+        post_to_twitter(twitter_post, args.images)
 
-    print(" > Posting to Bluesky...")
-    bluesky_posted = post_to_bluesky(content, args.images)
+    if args.all or args.bluesky:
+        print(" > Posting to Bluesky...")
+        post_to_bluesky(bluesky_post, args.images)
 
-
-
-    if mastodon_posted and twitter_posted and bluesky_posted:
-        print("Post successfully posted to all platforms!")
-    else:
-        print("One or more platforms could not be posted to. Please check the logs above.")
 
 
 if __name__ == "__main__":
